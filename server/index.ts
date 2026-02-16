@@ -32,6 +32,23 @@ app.get('/health', (_req, res) => {
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
     const distPath = path.join(process.cwd(), 'dist');
+
+    // Proxy for Spotify Embed (to get previews)
+    app.get('/api/spotify-embed/track/:id', async (req, res) => {
+        const { id } = req.params;
+        try {
+            const response = await fetch(`https://open.spotify.com/embed/track/${id}`, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+            });
+            if (!response.ok) throw new Error(`Status ${response.status}`);
+            const html = await response.text();
+            res.send(html);
+        } catch (e) {
+            console.error(`[Proxy] Embed fetch failed for ${id}:`, e);
+            res.status(500).send('Proxy Error');
+        }
+    });
+
     app.use(express.static(distPath));
     // Fix for Express 5 path-to-regexp issue with '*'
     app.get(/(.*)/, (_req, res) => {

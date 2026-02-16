@@ -76,19 +76,18 @@ export async function batchFetchPreviews(
 
     console.log(`[Intro] Fetching previews for ${needPreviews.length} tracks...`);
 
-    // Fetch in batches of 5 to avoid overwhelming the browser
+    // Fetch sequentially with delay to avoid rate limits
     let found = tracks.filter((t) => t.previewUrl).length;
-    for (let i = 0; i < needPreviews.length; i += 5) {
-        const batch = needPreviews.slice(i, i + 5);
-        const results = await Promise.allSettled(
-            batch.map(async (track) => {
-                const url = await getPreviewUrl(track.id);
-                if (url) {
-                    track.previewUrl = url;
-                    found++;
-                }
-            })
-        );
+
+    for (const track of needPreviews) {
+        // 200ms delay between requests
+        await new Promise(r => setTimeout(r, 200));
+
+        const url = await getPreviewUrl(track.id);
+        if (url) {
+            track.previewUrl = url;
+            found++;
+        }
     }
 
     console.log(`[Intro] Preview fetch complete: ${found}/${tracks.length} tracks have audio`);

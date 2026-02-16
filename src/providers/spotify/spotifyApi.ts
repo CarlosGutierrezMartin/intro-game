@@ -9,14 +9,18 @@ export class SpotifyApiError extends Error {
     }
 }
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 /**
  * Low-level fetch wrapper for Spotify Web API.
  * Automatically injects auth token and handles errors.
+ * Retries on 429 (Too Many Requests).
  */
 export async function spotifyFetch<T>(
     endpoint: string,
     token: string,
-    options?: RequestInit
+    options?: RequestInit,
+    retries = 3
 ): Promise<T> {
     const url = `${BASE_URL}${endpoint}`;
 
@@ -29,6 +33,16 @@ export async function spotifyFetch<T>(
     });
 
     if (!response.ok) {
+        // Handle Rate Limiting (429)
+        if (response.status === 429 && retries > 0) {
+            const retryAfterSec = parseInt(response.headers.get('Retry-After') || '1', 10);
+            const waitMs = (retryAfterSec * 1000) + 500; // Wait extra 500ms
+
+            console.warn(`[Intro] Spotify 429: Waiting ${waitMs}ms...`);
+            await sleep(waitMs);
+            return spotifyFetch<T>(endpoint, token, options, retries - 1);
+        }
+
         const errorText = await response.text();
         let errorData: any = {};
         try { errorData = JSON.parse(errorText); } catch { /* raw text */ }
