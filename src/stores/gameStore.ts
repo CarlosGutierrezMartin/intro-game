@@ -1,0 +1,202 @@
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { GamePhase, Stage, STAGE_CONFIG, STAGES_ORDER, Track, Playlist } from '../types';
+
+interface GameState {
+    // Current round
+    currentPlaylist: Playlist | null;
+    currentTrack: Track | null;
+    phase: GamePhase;
+    stage: Stage;
+    isAudioPlaying: boolean;
+
+    // Scoring
+    score: number;
+    streak: number;
+    bestStreak: number;
+    roundsPlayed: number;
+    correctGuesses: number;
+    lastPointsEarned: number;
+
+    // Track pool (loaded tracks with preview URLs)
+    trackPool: Track[];
+    playedTrackIds: Set<string>;
+
+    // Actions
+    startGame: (playlist: Playlist, tracks: Track[]) => void;
+    setPhase: (phase: GamePhase) => void;
+    setAudioPlaying: (playing: boolean) => void;
+    submitGuess: (guessTrackId: string) => 'correct' | 'wrong' | 'fail';
+    advanceToGuessing: () => void;
+    giveUp: () => void;
+    nextRound: () => void;
+    resetGame: () => void;
+}
+
+function getRandomTrack(pool: Track[], playedIds: Set<string>): Track | null {
+    const available = pool.filter((t) => !playedIds.has(t.id));
+    if (available.length === 0) return null;
+    return available[Math.floor(Math.random() * available.length)];
+}
+
+export const useGameStore = create<GameState>()(
+    persist(
+        (set, get) => ({
+            currentPlaylist: null,
+            currentTrack: null,
+            phase: GamePhase.IDLE,
+            stage: Stage.INTRO,
+            isAudioPlaying: false,
+            score: 0,
+            streak: 0,
+            bestStreak: 0,
+            roundsPlayed: 0,
+            correctGuesses: 0,
+            lastPointsEarned: 0,
+            trackPool: [],
+            playedTrackIds: new Set<string>(),
+
+            startGame: (playlist, tracks) => {
+                const firstTrack = tracks[Math.floor(Math.random() * tracks.length)];
+                set({
+                    currentPlaylist: playlist,
+                    trackPool: tracks,
+                    currentTrack: firstTrack,
+                    playedTrackIds: new Set([firstTrack.id]),
+                    phase: GamePhase.IDLE,
+                    stage: Stage.INTRO,
+                    score: 0,
+                    streak: 0,
+                    bestStreak: 0,
+                    roundsPlayed: 0,
+                    correctGuesses: 0,
+                    lastPointsEarned: 0,
+                    isAudioPlaying: false,
+                });
+            },
+
+            setPhase: (phase) => set({ phase }),
+
+            setAudioPlaying: (playing) => set({ isAudioPlaying: playing }),
+
+            advanceToGuessing: () => {
+                set({ phase: GamePhase.GUESSING, isAudioPlaying: false });
+            },
+
+            submitGuess: (guessTrackId) => {
+                const { currentTrack, stage, score, streak, bestStreak, correctGuesses, roundsPlayed } = get();
+                if (!currentTrack) return 'fail';
+
+                if (guessTrackId === currentTrack.id) {
+                    // ✅ Correct guess
+                    const points = STAGE_CONFIG[stage].points;
+                    const newStreak = streak + 1;
+                    set({
+                        score: score + points,
+                        streak: newStreak,
+                        bestStreak: Math.max(bestStreak, newStreak),
+                        correctGuesses: correctGuesses + 1,
+                        roundsPlayed: roundsPlayed + 1,
+                        lastPointsEarned: points,
+                        phase: GamePhase.REVEAL,
+                        isAudioPlaying: false,
+                    });
+                    return 'correct';
+                } else {
+                    // ❌ Wrong guess — advance stage or fail
+                    const currentStageIndex = STAGES_ORDER.indexOf(stage);
+                    if (currentStageIndex < STAGES_ORDER.length - 1) {
+                        // Move to next stage
+                        set({
+                            stage: STAGES_ORDER[currentStageIndex + 1],
+                            phase: GamePhase.IDLE, // Back to idle so they can play the longer clip
+                            isAudioPlaying: false,
+                        });
+                        return 'wrong';
+                    } else {
+                        // Failed at last stage (VIBE)
+                        set({
+                            streak: 0,
+                            roundsPlayed: roundsPlayed + 1,
+                            lastPointsEarned: 0,
+                            phase: GamePhase.REVEAL,
+                            isAudioPlaying: false,
+                        });
+                        return 'fail';
+                    }
+                }
+            },
+
+            giveUp: () => {
+                const { roundsPlayed } = get();
+                set({
+                    streak: 0,
+                    roundsPlayed: roundsPlayed + 1,
+                    lastPointsEarned: 0,
+                    phase: GamePhase.REVEAL,
+                    isAudioPlaying: false,
+                });
+            },
+
+            nextRound: () => {
+                const { trackPool, playedTrackIds } = get();
+                const nextTrack = getRandomTrack(trackPool, playedTrackIds);
+
+                if (!nextTrack) {
+                    // All tracks played — show summary by keeping REVEAL with null track
+                    set({ currentTrack: null, phase: GamePhase.REVEAL });
+                    return;
+                }
+
+                const newPlayed = new Set(playedTrackIds);
+                newPlayed.add(nextTrack.id);
+
+                set({
+                    currentTrack: nextTrack,
+                    playedTrackIds: newPlayed,
+                    phase: GamePhase.IDLE,
+                    stage: Stage.INTRO,
+                    isAudioPlaying: false,
+                    lastPointsEarned: 0,
+                });
+            },
+
+            resetGame: () =>
+                set({
+                    currentPlaylist: null,
+                    currentTrack: null,
+                    trackPool: [],
+                    playedTrackIds: new Set(),
+                    phase: GamePhase.IDLE,
+                    stage: Stage.INTRO,
+                    isAudioPlaying: false,
+                    score: 0,
+                    streak: 0,
+                    bestStreak: 0,
+                    roundsPlayed: 0,
+                    correctGuesses: 0,
+                    lastPointsEarned: 0,
+                }),
+        }),
+        {
+            name: 'intro-game',
+            partialize: (state) => ({
+                score: state.score,
+                bestStreak: state.bestStreak,
+                roundsPlayed: state.roundsPlayed,
+                correctGuesses: state.correctGuesses,
+            }),
+            // Custom serializer for Set
+            storage: {
+                getItem: (name) => {
+                    const str = localStorage.getItem(name);
+                    return str ? JSON.parse(str) : null;
+                },
+                setItem: (name, value) => {
+                    localStorage.setItem(name, JSON.stringify(value));
+                },
+                removeItem: (name) => localStorage.removeItem(name),
+            },
+        }
+    )
+);
