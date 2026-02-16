@@ -7,17 +7,22 @@ export const Lobby: React.FC = () => {
     const { createSession, joinSession, error } = useMultiplayerStore();
     const user = useAuthStore((s) => s.user);
     const [joinCode, setJoinCode] = useState('');
+    const [localName, setLocalName] = useState('');
     const [mode, setMode] = useState<'pick' | 'join'>('pick');
 
-    const displayName = user?.displayName || 'Player';
-    const avatarUrl = user?.avatarUrl || '';
+    // Use auth name if available, otherwise local state (Guest)
+    const displayName = user?.displayName || localName;
+    const avatarUrl = user?.avatarUrl || `https://api.dicebear.com/7.x/thumbs/svg?seed=${displayName}`;
+
+    const setDisplayName = (name: string) => setLocalName(name);
 
     const handleCreate = () => {
+        if (!displayName.trim()) return;
         createSession(displayName, avatarUrl);
     };
 
     const handleJoin = () => {
-        if (joinCode.trim().length >= 4) {
+        if (joinCode.trim().length >= 4 && displayName.trim()) {
             joinSession(joinCode.trim(), displayName, avatarUrl);
         }
     };
@@ -35,7 +40,24 @@ export const Lobby: React.FC = () => {
 
                 <p className="lobby-subtitle">Enter the session code from your friend</p>
 
+                {/* Guest Name Input (if not logged in) */}
+                {!user && (
+                    <div className="code-input-container" style={{ marginBottom: 16 }}>
+                        <label style={{ display: 'block', marginBottom: 8, fontSize: '0.9rem', color: '#aaa' }}>Your Name</label>
+                        <input
+                            className="code-input"
+                            style={{ fontSize: '1.2rem', padding: '12px' }}
+                            type="text"
+                            placeholder="Player Name"
+                            value={displayName}
+                            onChange={(e) => setDisplayName(e.target.value)}
+                            maxLength={12}
+                        />
+                    </div>
+                )}
+
                 <div className="code-input-container">
+                    <label style={{ display: 'block', marginBottom: 8, fontSize: '0.9rem', color: '#aaa' }}>Session Code</label>
                     <input
                         className="code-input"
                         type="text"
@@ -43,7 +65,7 @@ export const Lobby: React.FC = () => {
                         value={joinCode}
                         onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
                         maxLength={6}
-                        autoFocus
+                        autoFocus={!!user} // Only autofocus code if user is logged in
                         onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
                     />
                 </div>
@@ -53,7 +75,7 @@ export const Lobby: React.FC = () => {
                 <button
                     className="md-btn md-btn-filled"
                     onClick={handleJoin}
-                    disabled={joinCode.trim().length < 4}
+                    disabled={joinCode.trim().length < 4 || !displayName.trim()}
                     style={{ width: '100%', maxWidth: 320 }}
                 >
                     Join Session
@@ -71,8 +93,29 @@ export const Lobby: React.FC = () => {
 
             {error && <div className="lobby-error">{error}</div>}
 
+            {/* Guest Name Input (if not logged in) */}
+            {!user && (
+                <div className="code-input-container" style={{ marginBottom: 24, maxWidth: 320, marginInline: 'auto' }}>
+                    <label style={{ display: 'block', marginBottom: 8, fontSize: '0.9rem', color: '#aaa', textAlign: 'left' }}>Your Name</label>
+                    <input
+                        className="code-input"
+                        style={{ fontSize: '1.2rem', padding: '12px' }}
+                        type="text"
+                        placeholder="Player Name"
+                        value={displayName}
+                        onChange={(e) => setDisplayName(e.target.value)}
+                        maxLength={12}
+                    />
+                </div>
+            )}
+
             <div className="lobby-cards">
-                <button className="lobby-card lobby-card-create" onClick={handleCreate}>
+                <button
+                    className="lobby-card lobby-card-create"
+                    onClick={handleCreate}
+                    disabled={!displayName.trim()}
+                    style={{ opacity: !displayName.trim() ? 0.5 : 1 }}
+                >
                     <div className="lobby-card-icon">🎮</div>
                     <div className="lobby-card-title">Create Game</div>
                     <div className="lobby-card-desc">Host a session and share the code</div>

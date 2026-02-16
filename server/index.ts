@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { createServer } from 'http';
@@ -152,7 +153,96 @@ io.on('connection', (socket) => {
             }
         }
     });
+
+    // ─── Request Generic Playlists (No Auth) ───
+    socket.on('request_generic_playlists', async () => {
+        try {
+            const token = await getClientCredentialsToken();
+            if (!token) {
+                socket.emit('generic_playlists_error', { message: 'Server not configured for public API access' });
+                return;
+            }
+
+            // Fetch Global Top 50
+            const playlistId = '37i9dQZEVXbMDoHDwVN2tF';
+            const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+
+            if (!response.ok) throw new Error('Failed to fetch Top 50');
+
+            const data = await response.json();
+            const tracks = data.tracks.items
+                .filter((item: any) => item.track && item.track.preview_url)
+                .map((item: any) => ({
+                    id: item.track.id,
+                    title: item.track.name,
+                    artist: item.track.artists.map((a: any) => a.name).join(', '),
+                    album: item.track.album.name,
+                    albumArt: item.track.album.images?.[0]?.url || '',
+                    previewUrl: item.track.preview_url,
+                }))
+                .slice(0, 50); // Limit to 50
+
+            const playlist = {
+                id: 'global-top-50',
+                name: 'Global Top 50 🌎',
+                coverUrl: data.images?.[0]?.url || '',
+                trackCount: tracks.length,
+                tracks: tracks
+            };
+
+            socket.emit('generic_playlists', { playlists: [playlist] });
+
+        } catch (e) {
+            console.error('[Server] Failed to fetch generic playlists:', e);
+            socket.emit('generic_playlists_error', { message: 'Failed to load Top 50' });
+        }
+    });
 });
+
+// ─── Spotify Client Credentials (Server Side) ───
+let cachedClientToken: string | null = null;
+let clientTokenExpiresAt = 0;
+
+async function getClientCredentialsToken(): Promise<string | null> {
+    if (cachedClientToken && Date.now() < clientTokenExpiresAt) {
+        return cachedClientToken;
+    }
+
+    const clientId = process.env.VITE_SPOTIFY_CLIENT_ID;
+    const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+        console.warn('[Server] Missing Client ID or Secret for Client Credentials Flow');
+        return null;
+    }
+
+    try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                Authorization: `Basic ${btoa(clientId + ':' + clientSecret)}`,
+            },
+            body: new URLSearchParams({ grant_type: 'client_credentials' }),
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            console.error('[Server] Token fetch failed:', err);
+            return null;
+        }
+
+        const data = await response.json();
+        cachedClientToken = data.access_token;
+        clientTokenExpiresAt = Date.now() + (data.expires_in * 1000) - 60000; // Buffer 1 min
+        return cachedClientToken;
+    } catch (e) {
+        console.error('[Server] Client Credentials Error:', e);
+        return null;
+    }
+}
 
 // Track which players are ready for next round
 const nextRoundReady = new Map<string, Set<string>>();
