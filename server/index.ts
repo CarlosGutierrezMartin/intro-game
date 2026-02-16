@@ -32,7 +32,8 @@ app.get('/health', (_req, res) => {
 if (process.env.NODE_ENV === 'production') {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    // Fix for Express 5 path-to-regexp issue with '*'
+    app.get(/(.*)/, (_req, res) => {
         res.sendFile(path.join(distPath, 'index.html'));
     });
 }
