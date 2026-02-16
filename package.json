@@ -12,6 +12,8 @@
     "start": "tsx server/index.ts"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.1.0",
     "express": "^5.1.0",
     "nanoid": "^5.1.5",
     "react": "^19.2.4",
@@ -19,16 +21,14 @@
     "socket.io": "^4.8.0",
     "socket.io-client": "^4.8.0",
     "tsx": "^4.19.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.0.0",
-    "concurrently": "^9.1.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@types/react-dom": "^19.2.3"
   }
 }
