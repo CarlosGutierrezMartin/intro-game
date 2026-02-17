@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 import { SpotifyProvider } from '../../providers/spotify/SpotifyProvider';
 import { SearchResult } from '../../types';
+import { getSocket } from '../../services/socketService';
 
 interface SearchGuessProps {
     onSelect: (trackId: string) => void;
@@ -16,7 +17,8 @@ export const SearchGuess: React.FC<SearchGuessProps> = ({ onSelect, disabled }) 
     const inputRef = useRef<HTMLInputElement>(null);
     const { checkAndRefresh } = useAuthStore();
 
-    // Debounced search against Spotify API
+    // Debounced search — uses Spotify API directly if authenticated,
+    // otherwise falls back to server-side socket proxy
     useEffect(() => {
         if (query.length < 2) {
             setResults([]);
@@ -28,11 +30,16 @@ export const SearchGuess: React.FC<SearchGuessProps> = ({ onSelect, disabled }) 
             setIsSearching(true);
             try {
                 const token = await checkAndRefresh();
-                if (!token) return;
-                const provider = new SpotifyProvider(() => token);
-                const data = await provider.searchTracks(query, 8);
-                setResults(data);
-                setIsOpen(data.length > 0);
+                if (token) {
+                    // ─── Authenticated: direct Spotify API ───
+                    const provider = new SpotifyProvider(() => token);
+                    const data = await provider.searchTracks(query, 8);
+                    setResults(data);
+                    setIsOpen(data.length > 0);
+                } else {
+                    // ─── Unauthenticated: server-side proxy via socket ───
+                    await searchViaSocket(query, setResults, setIsOpen);
+                }
             } catch (e) {
                 console.error('Search failed:', e);
             } finally {
@@ -116,3 +123,43 @@ export const SearchGuess: React.FC<SearchGuessProps> = ({ onSelect, disabled }) 
         </div>
     );
 };
+
+/**
+ * Search via server-side socket proxy.
+ * Uses the existing socket connection to emit 'search_tracks' and
+ * receives 'search_results' with tracks resolved via Client Credentials.
+ */
+function searchViaSocket(
+    query: string,
+    setResults: React.Dispatch<React.SetStateAction<SearchResult[]>>,
+    setIsOpen: React.Dispatch<React.SetStateAction<boolean>>
+): Promise<void> {
+    return new Promise((resolve) => {
+        const socket = getSocket();
+        if (!socket.connected) {
+            console.warn('[SearchGuess] Socket not connected, cannot search');
+            resolve();
+            return;
+        }
+
+        // One-time listener for this specific search response
+        const timeout = setTimeout(() => {
+            socket.off('search_results', handleResults);
+            resolve();
+        }, 5000); // 5s timeout
+
+        const handleResults = (data: { results: SearchResult[]; error?: string }) => {
+            clearTimeout(timeout);
+            socket.off('search_results', handleResults);
+            if (data.error) {
+                console.warn('[SearchGuess] Server search error:', data.error);
+            }
+            setResults(data.results || []);
+            setIsOpen((data.results || []).length > 0);
+            resolve();
+        };
+
+        socket.on('search_results', handleResults);
+        socket.emit('search_tracks', { query });
+    });
+}

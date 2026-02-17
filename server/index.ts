@@ -206,6 +206,48 @@ io.on('connection', (socket) => {
             socket.emit('generic_playlists_error', { message: 'Failed to load Top 50' });
         }
     });
+
+    // ─── Search Tracks (Server-side proxy for unauthenticated players) ───
+    socket.on('search_tracks', async (payload: { query: string }) => {
+        const query = payload?.query?.trim();
+        if (!query || query.length < 2) {
+            socket.emit('search_results', { results: [] });
+            return;
+        }
+
+        try {
+            const token = await getClientCredentialsToken();
+            if (!token) {
+                socket.emit('search_results', { results: [], error: 'Server not configured for search' });
+                return;
+            }
+
+            const response = await fetch(
+                `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=8`,
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+
+            if (!response.ok) {
+                console.error(`[Search Proxy] Spotify returned ${response.status}`);
+                socket.emit('search_results', { results: [], error: 'Search failed' });
+                return;
+            }
+
+            const data = await response.json();
+            const results = (data.tracks?.items || []).map((track: any) => ({
+                id: track.id,
+                title: track.name,
+                artist: track.artists?.map((a: any) => a.name).join(', ') || '',
+                album: track.album?.name || '',
+                albumArt: track.album?.images?.[0]?.url || '',
+            }));
+
+            socket.emit('search_results', { results });
+        } catch (e) {
+            console.error('[Search Proxy] Error:', e);
+            socket.emit('search_results', { results: [], error: 'Search failed' });
+        }
+    });
 });
 
 // ─── Spotify Client Credentials (Server Side) ───
