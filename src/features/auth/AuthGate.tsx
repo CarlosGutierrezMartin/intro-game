@@ -4,7 +4,7 @@ import { redirectToSpotifyLogin, getCallbackCode } from './spotifyAuth';
 import { fetchCurrentUser } from '../../providers/spotify/spotifyApi';
 
 export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const { isAuthenticated, isLoading, handleCallback, setUser, accessToken, checkAndRefresh } = useAuthStore();
+    const { isAuthenticated, isGuest, isLoading, handleCallback, setUser, loginAsGuest, checkAndRefresh } = useAuthStore();
 
     useEffect(() => {
         // Handle OAuth callback
@@ -56,7 +56,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
         );
     }
 
-    if (!isAuthenticated) {
+    if (!isAuthenticated && !isGuest) {
         return (
             <div className="auth-screen">
                 <div className="auth-bg">
@@ -78,6 +78,24 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
                         </svg>
                         Connect with Spotify
                     </button>
+
+                    <button
+                        className="md-btn md-btn-outlined"
+                        onClick={loginAsGuest}
+                        style={{
+                            marginTop: 16,
+                            borderColor: 'rgba(255,255,255,0.3)',
+                            color: 'rgba(255,255,255,0.8)',
+                            width: '100%',
+                            maxWidth: 320
+                        }}
+                    >
+                        Continue as Guest
+                    </button>
+
+                    <p style={{ marginTop: 12, fontSize: '0.8rem', opacity: 0.5 }}>
+                        Guest mode limits features to basic gameplay.
+                    </p>
                 </div>
             </div>
         );

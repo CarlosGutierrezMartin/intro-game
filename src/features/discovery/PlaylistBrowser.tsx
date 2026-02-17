@@ -7,6 +7,7 @@ import { SpotifyProvider } from '../../providers/spotify/SpotifyProvider';
 import { fetchLikedSongs, fetchTopTracks, fetchPlaylistTracks } from '../../providers/spotify/spotifyApi';
 import { Playlist, Track } from '../../types';
 import { useMultiplayerStore } from '../../stores/multiplayerStore';
+import { redirectToSpotifyLogin } from '../auth/spotifyAuth';
 
 export const PlaylistBrowser: React.FC = () => {
     const { user, logout, checkAndRefresh } = useAuthStore();
@@ -28,12 +29,17 @@ export const PlaylistBrowser: React.FC = () => {
         return token;
     };
 
+    // ─── Playlists ───
     const loadPlaylists = async () => {
         setLoading(true);
         setError(null);
         try {
             const token = await getToken();
-            if (!token) { setError('No access token'); return; }
+            if (!token) {
+                // Verified Guest or just no token -> limited mode
+                setPlaylists([]);
+                return;
+            }
             const provider = new SpotifyProvider(() => token);
             const data = await provider.getUserPlaylists();
             setPlaylists(data);
@@ -79,8 +85,13 @@ export const PlaylistBrowser: React.FC = () => {
         startGame(playlist, playable);
     };
 
+    const requireLogin = () => {
+        setError('Please log in with Spotify to access your library.');
+    };
+
     // ─── Liked Songs ───
     const handleLikedSongs = async () => {
+        if (!user) return requireLogin();
         if (loadingId) return;
         setLoadingId('liked');
         setError(null);
@@ -98,6 +109,7 @@ export const PlaylistBrowser: React.FC = () => {
 
     // ─── Top Tracks ───
     const handleTopTracks = async (range: 'short_term' | 'medium_term' | 'long_term', label: string) => {
+        if (!user) return requireLogin();
         const id = `top-${range}`;
         if (loadingId) return;
         setLoadingId(id);
@@ -155,7 +167,7 @@ export const PlaylistBrowser: React.FC = () => {
             </div>
 
             {/* User info */}
-            {user && (
+            {user ? (
                 <div className="discovery-user">
                     <div className="discovery-avatar">
                         {user.avatarUrl ? (
@@ -180,6 +192,14 @@ export const PlaylistBrowser: React.FC = () => {
                         </svg>
                     </button>
                 </div>
+            ) : (
+                <button
+                    className="md-btn md-btn-outlined"
+                    onClick={() => redirectToSpotifyLogin()}
+                    style={{ position: 'absolute', top: 20, right: 20, borderColor: 'var(--md-outline)' }}
+                >
+                    Login to Spotify
+                </button>
             )}
 
             {/* Error */}

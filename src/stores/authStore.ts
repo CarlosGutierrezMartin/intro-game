@@ -19,6 +19,7 @@ interface AuthState {
     expiresAt: number | null;
     user: UserProfile | null;
     isAuthenticated: boolean;
+    isGuest: boolean;
     isLoading: boolean;
 
     // Actions
@@ -26,6 +27,7 @@ interface AuthState {
     setUser: (user: UserProfile) => void;
     handleCallback: (code: string) => Promise<void>;
     checkAndRefresh: () => Promise<string | null>;
+    loginAsGuest: () => void;
     logout: () => void;
 }
 
@@ -37,6 +39,7 @@ export const useAuthStore = create<AuthState>()(
             expiresAt: null,
             user: null,
             isAuthenticated: false,
+            isGuest: false,
             isLoading: false,
 
             setTokens: (tokens) =>
@@ -82,6 +85,10 @@ export const useAuthStore = create<AuthState>()(
                 return accessToken;
             },
 
+            loginAsGuest: () => {
+                set({ isGuest: true });
+            },
+
             logout: () => {
                 set({
                     accessToken: null,
@@ -89,6 +96,7 @@ export const useAuthStore = create<AuthState>()(
                     expiresAt: null,
                     user: null,
                     isAuthenticated: false,
+                    isGuest: false,
                     isLoading: false,
                 });
                 // Force-clear persisted state so stale tokens don't linger
@@ -104,6 +112,7 @@ export const useAuthStore = create<AuthState>()(
                 expiresAt: state.expiresAt,
                 user: state.user,
                 isAuthenticated: state.isAuthenticated,
+                isGuest: state.isGuest,
             }),
         }
     )
