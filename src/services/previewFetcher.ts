@@ -7,8 +7,23 @@
 // to https://open.spotify.com/embed/track/{id}
 const EMBED_BASE = '/api/spotify-embed/track';
 
-// In-memory cache to avoid re-fetching
-const previewCache = new Map<string, string | null>();
+// In-memory cache with TTL to avoid re-fetching and stale URLs
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const previewCache = new Map<string, { url: string | null; timestamp: number }>();
+
+function getCached(trackId: string): string | null | undefined {
+    const entry = previewCache.get(trackId);
+    if (!entry) return undefined;
+    if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+        previewCache.delete(trackId);
+        return undefined;
+    }
+    return entry.url;
+}
+
+function setCache(trackId: string, url: string | null): void {
+    previewCache.set(trackId, { url, timestamp: Date.now() });
+}
 
 /**
  * Attempt to get a preview URL for a Spotify track.
@@ -16,9 +31,10 @@ const previewCache = new Map<string, string | null>();
  * an audioPreview URL in its embedded JSON data.
  */
 export async function getPreviewUrl(trackId: string): Promise<string | null> {
-    // Check cache first
-    if (previewCache.has(trackId)) {
-        return previewCache.get(trackId)!;
+    // Check cache first (with TTL)
+    const cached = getCached(trackId);
+    if (cached !== undefined) {
+        return cached;
     }
 
     try {
@@ -30,7 +46,7 @@ export async function getPreviewUrl(trackId: string): Promise<string | null> {
 
         if (!response.ok) {
             console.warn(`[Intro] Embed fetch failed for ${trackId}: ${response.status}`);
-            previewCache.set(trackId, null);
+            setCache(trackId, null);
             return null;
         }
 
@@ -41,7 +57,7 @@ export async function getPreviewUrl(trackId: string): Promise<string | null> {
         const match = html.match(/"audioPreview"\s*:\s*\{\s*"url"\s*:\s*"([^"]+)"/);
         if (match && match[1]) {
             const url = match[1];
-            previewCache.set(trackId, url);
+            setCache(trackId, url);
             console.log(`[Intro] Found preview for ${trackId}`);
             return url;
         }
@@ -50,16 +66,16 @@ export async function getPreviewUrl(trackId: string): Promise<string | null> {
         const mp3Match = html.match(/https:\/\/p\.scdn\.co\/mp3-preview\/[a-zA-Z0-9]+[^"']*/);
         if (mp3Match) {
             const url = mp3Match[0];
-            previewCache.set(trackId, url);
+            setCache(trackId, url);
             console.log(`[Intro] Found mp3 preview for ${trackId}`);
             return url;
         }
 
-        previewCache.set(trackId, null);
+        setCache(trackId, null);
         return null;
     } catch (e) {
         console.warn(`[Intro] Preview fetch error for ${trackId}:`, e);
-        previewCache.set(trackId, null);
+        setCache(trackId, null);
         return null;
     }
 }
@@ -80,8 +96,8 @@ export async function batchFetchPreviews(
     let found = tracks.filter((t) => t.previewUrl).length;
 
     for (const track of needPreviews) {
-        // 200ms delay between requests
-        await new Promise(r => setTimeout(r, 200));
+        // 500ms delay between requests to avoid rate limits
+        await new Promise(r => setTimeout(r, 500));
 
         const url = await getPreviewUrl(track.id);
         if (url) {

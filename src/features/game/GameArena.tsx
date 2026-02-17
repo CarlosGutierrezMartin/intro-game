@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useCallback, useEffect } from 'react';
-import { useGameStore } from '../../stores/gameStore';
+import { useGameStore, GAME_LENGTH } from '../../stores/gameStore';
 import { useThemeStore } from '../../stores/themeStore';
 import { audioEngine } from '../../services/audioEngine';
 import { GamePhase, STAGE_CONFIG, STAGES_ORDER, Stage } from '../../types';
@@ -19,7 +19,6 @@ export const GameArena: React.FC = () => {
         roundsPlayed,
         correctGuesses,
         lastPointsEarned,
-        trackPool,
         setAudioPlaying,
         advanceToGuessing,
         submitGuess,
@@ -85,7 +84,6 @@ export const GameArena: React.FC = () => {
         }
     }, [currentTrack]);
 
-    const totalTracks = trackPool.length + roundsPlayed;
 
     // ─── Game Complete State ───
     if (!currentTrack && phase === GamePhase.REVEAL) {
@@ -166,7 +164,7 @@ export const GameArena: React.FC = () => {
                 <div className="game-round-pill">
                     <span className="game-round-num">{roundsPlayed + 1}</span>
                     <span className="game-round-sep">/</span>
-                    <span className="game-round-total">{totalTracks}</span>
+                    <span className="game-round-total">{GAME_LENGTH}</span>
                 </div>
 
                 {/* Score */}

@@ -4,17 +4,20 @@ import {
     GuessResultPayload,
     RoundCompletePayload,
     GameOverPayload,
+    OpponentCorrectPayload,
+    StageAdvancePayload,
     ROUNDS_PER_GAME,
     PRESSURE_TIMER_SECONDS,
 } from '../shared/events';
 
 // ─── Per-Player State ───
 interface PlayerRoundState {
-    stage: number;       // 0, 1, 2
-    hasGuessed: boolean; // guessed at this stage already?
+    isLocked: boolean;       // true = blocked after wrong guess
     guessedCorrectly: boolean;
     pointsEarned: number;
     stageGuessedAt: number | null;
+
+    // Cumulative stats (persist across rounds)
     totalScore: number;
     correctGuesses: number;
     streak: number;
@@ -32,10 +35,11 @@ export class GameRoom {
     private tracks: TrackData[] = [];
     private playlistName = '';
     private currentRound = 0;
+    private currentStage = 0;           // 0, 1, 2 — synchronized across both players
     private playerStates = new Map<string, PlayerRoundState>();
     private pressureTimer: ReturnType<typeof setTimeout> | null = null;
-    private pressureTargetId: string | null = null;
     private roundComplete = false;
+    private nextRoundReady = new Set<string>();
 
     // Callbacks set by the socket handler
     onGuessResult?: (playerId: string, result: GuessResultPayload) => void;
@@ -45,6 +49,8 @@ export class GameRoom {
     onNewRound?: (round: number, totalRounds: number, track: TrackData) => void;
     onGameOver?: (result: GameOverPayload) => void;
     onOpponentStageUpdate?: (targetId: string, stage: number) => void;
+    onStageAdvance?: (payload: StageAdvancePayload) => void;
+    onOpponentCorrect?: (targetId: string, payload: OpponentCorrectPayload) => void;
 
     constructor(code: string) {
         this.code = code;
@@ -62,8 +68,7 @@ export class GameRoom {
 
     private initPlayerState(playerId: string): void {
         this.playerStates.set(playerId, {
-            stage: 0,
-            hasGuessed: false,
+            isLocked: false,
             guessedCorrectly: false,
             pointsEarned: 0,
             stageGuessedAt: null,
@@ -107,6 +112,7 @@ export class GameRoom {
     startGame(): TrackData | null {
         if (this.tracks.length === 0) return null;
         this.currentRound = 1;
+        this.currentStage = 0;
         this.resetRoundStates();
         return this.tracks[0];
     }
@@ -128,10 +134,10 @@ export class GameRoom {
 
     private resetRoundStates(): void {
         this.roundComplete = false;
+        this.currentStage = 0;
         this.clearPressureTimer();
-        for (const [id, state] of this.playerStates) {
-            state.stage = 0;
-            state.hasGuessed = false;
+        for (const [, state] of this.playerStates) {
+            state.isLocked = false;
             state.guessedCorrectly = false;
             state.pointsEarned = 0;
             state.stageGuessedAt = null;
@@ -139,6 +145,14 @@ export class GameRoom {
     }
 
     // ─── Guess Handling ───
+    // Rules:
+    // 1. Both players are always in the same stage (currentStage)
+    // 2. Wrong guess → player's input is BLOCKED (isLocked = true)
+    //    → 15s pressure timer starts for the opponent
+    // 3. Correct guess → round ends immediately → both move to next round
+    // 4. If both players guess wrong → cancel timer, both advance to next stage
+    // 5. Pressure timer expiry → both advance to next stage
+    // 6. Last stage failure → round over with 0 points for that player
 
     submitGuess(playerId: string, guessTrackId: string, stage: number): void {
         if (this.roundComplete) return;
@@ -146,123 +160,132 @@ export class GameRoom {
         const state = this.playerStates.get(playerId);
         if (!state) return;
 
+        // Guard: already locked (guessed wrong), already guessed correctly, or stage desync
+        if (state.isLocked) return;
+        if (state.guessedCorrectly) return;
+
         const currentTrack = this.getCurrentTrack();
         if (!currentTrack) return;
 
         const opponentId = this.getOpponentId(playerId);
-
-        // Check if correct
         const correct = guessTrackId === currentTrack.id;
 
         if (correct) {
-            const points = STAGE_POINTS[Math.min(stage, MAX_STAGE)] || 33;
+            // ─── CORRECT GUESS ─── Round ends immediately
+            const points = STAGE_POINTS[Math.min(this.currentStage, MAX_STAGE)] || 33;
             state.guessedCorrectly = true;
             state.pointsEarned = points;
-            state.stageGuessedAt = stage;
+            state.stageGuessedAt = this.currentStage;
             state.totalScore += points;
             state.correctGuesses++;
             state.streak++;
             state.bestStreak = Math.max(state.bestStreak, state.streak);
-            state.hasGuessed = true;
 
             this.onGuessResult?.(playerId, {
                 correct: true,
                 pointsEarned: points,
                 newStage: null,
+                isLocked: false,
             });
-        } else {
-            state.hasGuessed = true; // used their guess for this stage
 
-            if (stage < MAX_STAGE) {
-                // Advance to next stage
-                state.stage = stage + 1;
-                state.hasGuessed = false; // can guess again at next stage
-
-                this.onGuessResult?.(playerId, {
-                    correct: false,
-                    pointsEarned: 0,
-                    newStage: stage + 1,
-                });
-
-                // Notify opponent of stage change
-                if (opponentId) {
-                    this.onOpponentStageUpdate?.(opponentId, stage + 1);
-                }
-            } else {
-                // Failed at last stage
-                state.streak = 0;
-                state.hasGuessed = true;
-
-                this.onGuessResult?.(playerId, {
-                    correct: false,
-                    pointsEarned: 0,
-                    newStage: null,
+            // Notify opponent that you guessed correctly
+            if (opponentId) {
+                this.onOpponentCorrect?.(opponentId, {
+                    track: currentTrack,
+                    opponentPointsEarned: points,
+                    opponentStage: this.currentStage,
                 });
             }
-        }
 
-        // Start pressure timer on opponent if not already pressured
-        if (opponentId && !this.pressureTimer) {
-            const opponentState = this.playerStates.get(opponentId);
-            const opponentDone = opponentState?.guessedCorrectly ||
-                (opponentState && opponentState.stage >= MAX_STAGE && opponentState.hasGuessed);
+            // Cancel any active pressure timer and complete the round
+            this.clearPressureTimer();
+            this.roundComplete = true;
 
-            if (!opponentDone) {
-                this.pressureTargetId = opponentId;
-                this.onOpponentGuessed?.(opponentId, PRESSURE_TIMER_SECONDS, stage, correct);
+            // Reset streak for opponent if they didn't guess correctly
+            if (opponentId) {
+                const opponentState = this.playerStates.get(opponentId);
+                if (opponentState && !opponentState.guessedCorrectly) {
+                    opponentState.streak = 0;
+                }
+            }
+
+            this.emitRoundComplete();
+        } else {
+            // ─── WRONG GUESS ─── Lock this player's input
+            state.isLocked = true;
+
+            this.onGuessResult?.(playerId, {
+                correct: false,
+                pointsEarned: 0,
+                newStage: null, // Stage doesn't change yet — wait for timer/opponent
+                isLocked: true,
+            });
+
+            // Check: did the opponent ALSO guess wrong already?
+            const opponentState = opponentId ? this.playerStates.get(opponentId) : null;
+            const opponentAlsoLocked = opponentState?.isLocked === true;
+
+            if (opponentAlsoLocked) {
+                // Both players guessed wrong — cancel existing timer, advance immediately
+                this.clearPressureTimer();
+                this.advanceStage();
+            } else if (opponentId && !this.pressureTimer) {
+                // Opponent hasn't guessed yet — start pressure timer for them
+                this.onOpponentGuessed?.(opponentId, PRESSURE_TIMER_SECONDS, this.currentStage, false);
 
                 this.pressureTimer = setTimeout(() => {
                     this.handlePressureExpired();
                 }, PRESSURE_TIMER_SECONDS * 1000);
             }
         }
+    }
 
-        // Check if round is complete
-        this.checkRoundComplete();
+    /**
+     * Advance both players to the next stage simultaneously.
+     * If already at last stage, end the round with 0 points for those who didn't guess.
+     */
+    private advanceStage(): void {
+        if (this.roundComplete) return;
+
+        if (this.currentStage >= MAX_STAGE) {
+            // Last stage — round is over, no one gets more chances
+            this.roundComplete = true;
+
+            // Reset streaks for players who didn't guess correctly
+            for (const [, state] of this.playerStates) {
+                if (!state.guessedCorrectly) {
+                    state.streak = 0;
+                }
+            }
+
+            this.emitRoundComplete();
+            return;
+        }
+
+        // Advance to next stage
+        this.currentStage++;
+
+        // Reset per-stage state for both players
+        for (const [, state] of this.playerStates) {
+            if (!state.guessedCorrectly) {
+                state.isLocked = false;
+            }
+        }
+
+        // Notify both players
+        this.onStageAdvance?.({ newStage: this.currentStage });
     }
 
     private handlePressureExpired(): void {
         this.clearPressureTimer();
-        if (this.pressureTargetId) {
-            const state = this.playerStates.get(this.pressureTargetId);
-            if (state && !state.guessedCorrectly) {
-                // Auto-advance stage or mark as failed
-                if (state.stage < MAX_STAGE) {
-                    state.stage = state.stage + 1;
-                    state.hasGuessed = false;
-                    this.onPressureExpired?.(this.pressureTargetId);
-                } else {
-                    state.hasGuessed = true;
-                    state.streak = 0;
-                    this.onPressureExpired?.(this.pressureTargetId);
-                }
-            }
-            this.pressureTargetId = null;
-        }
-        this.checkRoundComplete();
+        // Timer expired — both players advance to next stage
+        this.advanceStage();
     }
 
     private clearPressureTimer(): void {
         if (this.pressureTimer) {
             clearTimeout(this.pressureTimer);
             this.pressureTimer = null;
-        }
-        this.pressureTargetId = null;
-    }
-
-    private checkRoundComplete(): void {
-        if (this.roundComplete) return;
-
-        const playerIds = Array.from(this.playerStates.keys());
-        const allDone = playerIds.every((id) => {
-            const s = this.playerStates.get(id)!;
-            return s.guessedCorrectly || (s.stage >= MAX_STAGE && s.hasGuessed);
-        });
-
-        if (allDone) {
-            this.roundComplete = true;
-            this.clearPressureTimer();
-            this.emitRoundComplete();
         }
     }
 
@@ -288,6 +311,19 @@ export class GameRoom {
     }
 
     // ─── Next Round ───
+
+    playerReady(playerId: string): void {
+        this.nextRoundReady.add(playerId);
+
+        // Wait for both players to be ready
+        const playerIds = Array.from(this.playerStates.keys());
+        const allReady = playerIds.every((id) => this.nextRoundReady.has(id));
+
+        if (allReady) {
+            this.nextRoundReady.clear();
+            this.advanceRound();
+        }
+    }
 
     advanceRound(): void {
         this.currentRound++;

@@ -5,8 +5,9 @@ import {
     TrackData,
     RoundCompletePayload,
     GameOverPayload,
+    OpponentCorrectPayload,
+    StageAdvancePayload,
     Events,
-    PRESSURE_TIMER_SECONDS,
 } from '../../shared/events';
 import { connectSocket, disconnectSocket, emit, getSocket } from '../services/socketService';
 
@@ -32,6 +33,7 @@ interface MultiplayerState {
     totalRounds: number;
     playlistName: string;
     myStage: number;
+    isLocked: boolean;           // Input blocked after wrong guess
     myGuessedCorrectly: boolean;
     myPointsThisRound: number;
     myTotalScore: number;
@@ -44,6 +46,9 @@ interface MultiplayerState {
     // Pressure timer
     pressureTimerActive: boolean;
     pressureTimerSeconds: number;
+
+    // Opponent correct overlay
+    opponentCorrectData: OpponentCorrectPayload | null;
 
     // Round results
     roundResults: RoundCompletePayload | null;
@@ -74,6 +79,7 @@ const initialState = {
     totalRounds: 0,
     playlistName: '',
     myStage: 0,
+    isLocked: false,
     myGuessedCorrectly: false,
     myPointsThisRound: 0,
     myTotalScore: 0,
@@ -82,6 +88,7 @@ const initialState = {
     opponentGuessedCorrectly: false,
     pressureTimerActive: false,
     pressureTimerSeconds: 0,
+    opponentCorrectData: null,
     roundResults: null,
     gameOverData: null,
 };
@@ -115,7 +122,9 @@ export const useMultiplayerStore = create<MultiplayerState>()((set, get) => ({
     },
 
     submitGuess: (trackId) => {
-        const { myStage } = get();
+        const { myStage, isLocked, myGuessedCorrectly } = get();
+        // Guard: can't guess while locked or already correct
+        if (isLocked || myGuessedCorrectly) return;
         emit(Events.SUBMIT_GUESS, { trackId, stage: myStage });
     },
 
@@ -151,6 +160,8 @@ function setupListeners(
     // Remove any old listeners first
     socket.removeAllListeners();
 
+    // ─── Lobby Events ───
+
     socket.on(Events.SESSION_CREATED, (data: any) => {
         set({
             phase: 'waiting',
@@ -180,6 +191,8 @@ function setupListeners(
         set({ error: data.message });
     });
 
+    // ─── Game Start ───
+
     socket.on(Events.GAME_STARTING, (data: any) => {
         set({
             phase: 'playing',
@@ -188,15 +201,21 @@ function setupListeners(
             totalRounds: data.totalRounds,
             playlistName: data.playlistName,
             myStage: 0,
+            isLocked: false,
             myGuessedCorrectly: false,
             myPointsThisRound: 0,
             opponentStage: 0,
             opponentHasGuessed: false,
             opponentGuessedCorrectly: false,
             pressureTimerActive: false,
+            pressureTimerSeconds: 0,
+            opponentCorrectData: null,
             roundResults: null,
         });
     });
+
+    // ─── Guess Result ───
+    // Fired for the player who submitted the guess
 
     socket.on(Events.GUESS_RESULT, (data: any) => {
         if (data.correct) {
@@ -204,11 +223,16 @@ function setupListeners(
                 myGuessedCorrectly: true,
                 myPointsThisRound: data.pointsEarned,
                 myTotalScore: get().myTotalScore + data.pointsEarned,
+                isLocked: false,
             });
-        } else if (data.newStage !== null && data.newStage !== undefined) {
-            set({ myStage: data.newStage });
+        } else {
+            // Wrong guess — lock input, wait for stage advance or timer
+            set({ isLocked: data.isLocked ?? true });
         }
     });
+
+    // ─── Opponent Guessed ───
+    // Fired on the OTHER player when their opponent has guessed (wrong)
 
     socket.on(Events.OPPONENT_GUESSED, (data: any) => {
         set({
@@ -219,7 +243,7 @@ function setupListeners(
             pressureTimerSeconds: data.timerSeconds,
         });
 
-        // Start countdown
+        // Start visual countdown
         clearPressureInterval();
         pressureInterval = setInterval(() => {
             const s = get().pressureTimerSeconds;
@@ -232,22 +256,47 @@ function setupListeners(
         }, 1000);
     });
 
+    // ─── Opponent Correct ───
+    // Fired on the OTHER player when their opponent has guessed correctly
+    // Round ends immediately
+
+    socket.on(Events.OPPONENT_CORRECT, (data: OpponentCorrectPayload) => {
+        clearPressureInterval();
+        set({
+            opponentGuessedCorrectly: true,
+            opponentCorrectData: data,
+            pressureTimerActive: false,
+            pressureTimerSeconds: 0,
+            isLocked: true, // Block further input
+        });
+    });
+
+    // ─── Stage Advance ───
+    // Fired to BOTH players when they should advance to next stage simultaneously
+
+    socket.on(Events.STAGE_ADVANCE, (data: StageAdvancePayload) => {
+        clearPressureInterval();
+        set({
+            myStage: data.newStage,
+            isLocked: false,
+            opponentHasGuessed: false,
+            pressureTimerActive: false,
+            pressureTimerSeconds: 0,
+        });
+    });
+
+    // ─── Pressure Timer Expired ───
+    // Server will send STAGE_ADVANCE instead, but keeping this for safety
+
     socket.on(Events.PRESSURE_TIMER_EXPIRED, () => {
         clearPressureInterval();
-        const { myStage } = get();
-        if (myStage < 2) {
-            set({
-                myStage: myStage + 1,
-                pressureTimerActive: false,
-                pressureTimerSeconds: 0,
-            });
-        } else {
-            set({
-                pressureTimerActive: false,
-                pressureTimerSeconds: 0,
-            });
-        }
+        set({
+            pressureTimerActive: false,
+            pressureTimerSeconds: 0,
+        });
     });
+
+    // ─── Round Complete ───
 
     socket.on(Events.ROUND_COMPLETE, (data: RoundCompletePayload) => {
         clearPressureInterval();
@@ -256,8 +305,12 @@ function setupListeners(
             roundResults: data,
             pressureTimerActive: false,
             pressureTimerSeconds: 0,
+            isLocked: true,
+            opponentCorrectData: null,
         });
     });
+
+    // ─── New Round ───
 
     socket.on(Events.NEW_ROUND, (data: any) => {
         set({
@@ -266,6 +319,7 @@ function setupListeners(
             round: data.round,
             totalRounds: data.totalRounds,
             myStage: 0,
+            isLocked: false,
             myGuessedCorrectly: false,
             myPointsThisRound: 0,
             opponentStage: 0,
@@ -273,9 +327,12 @@ function setupListeners(
             opponentGuessedCorrectly: false,
             pressureTimerActive: false,
             pressureTimerSeconds: 0,
+            opponentCorrectData: null,
             roundResults: null,
         });
     });
+
+    // ─── Game Over ───
 
     socket.on(Events.GAME_OVER, (data: GameOverPayload) => {
         clearPressureInterval();
@@ -285,9 +342,13 @@ function setupListeners(
         });
     });
 
+    // ─── Opponent Stage Update ───
+
     socket.on(Events.OPPONENT_STAGE_UPDATE, (data: any) => {
         set({ opponentStage: data.stage });
     });
+
+    // ─── Connection Events ───
 
     socket.on(Events.PLAYER_DISCONNECTED, () => {
         set({ error: 'Opponent disconnected', opponent: null });

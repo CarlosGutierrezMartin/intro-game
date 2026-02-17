@@ -6,6 +6,7 @@ import { useThemeStore } from '../../stores/themeStore';
 import { SpotifyProvider } from '../../providers/spotify/SpotifyProvider';
 import { fetchLikedSongs, fetchTopTracks, fetchPlaylistTracks } from '../../providers/spotify/spotifyApi';
 import { Playlist, Track } from '../../types';
+import { GAME_LENGTH } from '../../stores/gameStore';
 import { useMultiplayerStore } from '../../stores/multiplayerStore';
 import { redirectToSpotifyLogin } from '../auth/spotifyAuth';
 
@@ -71,6 +72,16 @@ export const PlaylistBrowser: React.FC = () => {
             return;
         }
 
+        // Enforce game length — shuffle and take at most GAME_LENGTH tracks
+        const gameTracks = playable.length > GAME_LENGTH
+            ? playable.slice(0, GAME_LENGTH)
+            : playable;
+
+        // Inform user if fewer than GAME_LENGTH tracks are playable
+        if (playable.length < GAME_LENGTH) {
+            console.warn(`[Intro] Only ${playable.length}/${tracks.length} tracks have audio. Playing with ${playable.length} tracks.`);
+        }
+
         if (coverUrl) applyPlaylistTheme(coverUrl);
 
         const playlist: Playlist = {
@@ -78,11 +89,11 @@ export const PlaylistBrowser: React.FC = () => {
             name,
             description: '',
             coverUrl,
-            trackCount: playable.length,
+            trackCount: gameTracks.length,
             owner: user?.displayName || '',
         };
 
-        startGame(playlist, playable);
+        startGame(playlist, gameTracks);
     };
 
     const requireLogin = () => {
@@ -98,7 +109,7 @@ export const PlaylistBrowser: React.FC = () => {
         try {
             const token = await getToken();
             if (!token) return;
-            const tracks = await fetchLikedSongs(token, 50);
+            const tracks = await fetchLikedSongs(token, 20);
             await launchGame('liked', '💚 Liked Songs', '', tracks);
         } catch (e: any) {
             setError(e.message || 'Failed to load liked songs');
@@ -117,7 +128,7 @@ export const PlaylistBrowser: React.FC = () => {
         try {
             const token = await getToken();
             if (!token) return;
-            const tracks = await fetchTopTracks(token, range, 50);
+            const tracks = await fetchTopTracks(token, range, 20);
             await launchGame(id, label, '', tracks);
         } catch (e: any) {
             setError(e.message || 'Failed to load top tracks');

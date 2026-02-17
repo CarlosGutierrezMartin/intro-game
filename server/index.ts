@@ -142,17 +142,7 @@ io.on('connection', (socket) => {
         const room = sessions.getRoom(currentRoomCode);
         if (!room) return;
 
-        // Only advance when both players request next
-        const readyKey = `${currentRoomCode}:nextReady`;
-        if (!nextRoundReady.has(readyKey)) {
-            nextRoundReady.set(readyKey, new Set());
-        }
-        nextRoundReady.get(readyKey)!.add(socket.id);
-
-        if (nextRoundReady.get(readyKey)!.size >= 2) {
-            nextRoundReady.delete(readyKey);
-            room.advanceRound();
-        }
+        room.playerReady(socket.id);
     });
 
     // ─── Disconnect ───
@@ -261,8 +251,6 @@ async function getClientCredentialsToken(): Promise<string | null> {
     }
 }
 
-// Track which players are ready for next round
-const nextRoundReady = new Map<string, Set<string>>();
 
 function wireRoomCallbacks(room: ReturnType<SessionManager['getRoom']>, roomCode: string): void {
     if (!room) return;
@@ -297,6 +285,14 @@ function wireRoomCallbacks(room: ReturnType<SessionManager['getRoom']>, roomCode
 
     room.onOpponentStageUpdate = (targetId, stage) => {
         io.to(targetId).emit(Events.OPPONENT_STAGE_UPDATE, { stage });
+    };
+
+    room.onStageAdvance = (payload) => {
+        io.to(roomCode).emit(Events.STAGE_ADVANCE, payload);
+    };
+
+    room.onOpponentCorrect = (targetId, payload) => {
+        io.to(targetId).emit(Events.OPPONENT_CORRECT, payload);
     };
 }
 

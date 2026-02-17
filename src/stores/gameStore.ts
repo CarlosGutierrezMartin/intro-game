@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { GamePhase, Stage, STAGE_CONFIG, STAGES_ORDER, Track, Playlist } from '../types';
 
+/** Maximum number of rounds (songs) per game */
+export const GAME_LENGTH = 10;
+
 interface GameState {
     // Current round
     currentPlaylist: Playlist | null;
@@ -57,10 +60,12 @@ export const useGameStore = create<GameState>()(
             playedTrackIds: new Set<string>(),
 
             startGame: (playlist, tracks) => {
-                const firstTrack = tracks[Math.floor(Math.random() * tracks.length)];
+                // Limit to GAME_LENGTH tracks
+                const pool = tracks.length > GAME_LENGTH ? tracks.slice(0, GAME_LENGTH) : tracks;
+                const firstTrack = pool[Math.floor(Math.random() * pool.length)];
                 set({
                     currentPlaylist: playlist,
-                    trackPool: tracks,
+                    trackPool: pool,
                     currentTrack: firstTrack,
                     playedTrackIds: new Set([firstTrack.id]),
                     phase: GamePhase.IDLE,
@@ -139,11 +144,18 @@ export const useGameStore = create<GameState>()(
             },
 
             nextRound: () => {
-                const { trackPool, playedTrackIds } = get();
+                const { trackPool, playedTrackIds, roundsPlayed } = get();
+
+                // Game complete after GAME_LENGTH rounds
+                if (roundsPlayed >= GAME_LENGTH) {
+                    set({ currentTrack: null, phase: GamePhase.REVEAL });
+                    return;
+                }
+
                 const nextTrack = getRandomTrack(trackPool, playedTrackIds);
 
                 if (!nextTrack) {
-                    // All tracks played — show summary by keeping REVEAL with null track
+                    // All tracks played (pool smaller than GAME_LENGTH)
                     set({ currentTrack: null, phase: GamePhase.REVEAL });
                     return;
                 }

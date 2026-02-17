@@ -557,3 +557,99 @@
     font-size: 0.75rem;
     opacity: 0.7;
 }
+
+/* ─── Locked Overlay (wrong guess) ─── */
+.locked-overlay {
+    position: relative;
+    z-index: 25;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    animation: locked-slide-in 0.3s ease-out;
+}
+
+.locked-icon {
+    font-size: 2rem;
+    margin-bottom: 8px;
+    animation: locked-pulse 1.5s infinite;
+}
+
+.locked-text {
+    font-size: 0.875rem;
+    color: var(--md-on-surface);
+    font-weight: 500;
+}
+
+@keyframes locked-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes locked-pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.15);
+    }
+}
+
+/* ─── Opponent Correct Overlay ─── */
+.opponent-correct-overlay {
+    position: relative;
+    z-index: 25;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px 16px;
+    background: linear-gradient(135deg,
+            color-mix(in srgb, var(--md-error-container) 60%, rgba(0, 0, 0, 0.6)),
+            rgba(0, 0, 0, 0.6));
+    backdrop-filter: blur(8px);
+    animation: opponent-correct-in 0.4s ease-out;
+}
+
+.opponent-correct-icon {
+    font-size: 2.5rem;
+    margin-bottom: 8px;
+}
+
+.opponent-correct-text {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--md-on-surface);
+    margin-bottom: 4px;
+}
+
+.opponent-correct-track {
+    font-size: 0.8125rem;
+    color: var(--md-on-surface-variant);
+    text-align: center;
+}
+
+@keyframes opponent-correct-in {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

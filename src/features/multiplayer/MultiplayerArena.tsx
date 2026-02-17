@@ -1,26 +1,26 @@
 import * as React from 'react';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useMultiplayerStore } from '../../stores/multiplayerStore';
-import { useAuthStore } from '../../stores/authStore';
 import { audioEngine } from '../../services/audioEngine';
 import { STAGE_CONFIG, Stage, STAGES_ORDER } from '../../types';
 import { SearchGuess } from '../game/SearchGuess';
+import { PRESSURE_TIMER_SECONDS } from '../../../shared/events';
 
 export const MultiplayerArena: React.FC = () => {
     const {
         currentTrack,
         round,
         totalRounds,
-        playlistName,
         myStage,
+        isLocked,
         myGuessedCorrectly,
-        myPointsThisRound,
         myTotalScore,
         opponentStage,
         opponentHasGuessed,
         opponentGuessedCorrectly,
         pressureTimerActive,
         pressureTimerSeconds,
+        opponentCorrectData,
         roundResults,
         gameOverData,
         me,
@@ -36,6 +36,7 @@ export const MultiplayerArena: React.FC = () => {
     const [feedback, setFeedback] = useState<'none' | 'wrong'>('none');
     const [waitingForNext, setWaitingForNext] = useState(false);
     const prevRoundRef = useRef(round);
+    const prevStageRef = useRef(myStage);
 
     // Reset per-round local state when round changes
     useEffect(() => {
@@ -48,6 +49,15 @@ export const MultiplayerArena: React.FC = () => {
         }
     }, [round]);
 
+    // Reset hasListened when stage advances
+    useEffect(() => {
+        if (myStage !== prevStageRef.current) {
+            prevStageRef.current = myStage;
+            setHasListened(false);
+            setIsPlaying(false);
+        }
+    }, [myStage]);
+
     // Preload audio
     useEffect(() => {
         if (currentTrack?.previewUrl) {
@@ -57,7 +67,7 @@ export const MultiplayerArena: React.FC = () => {
 
     // ─── Play Audio ───
     const handlePlay = useCallback(async () => {
-        if (!currentTrack?.previewUrl || isPlaying || myGuessedCorrectly) return;
+        if (!currentTrack?.previewUrl || isPlaying || myGuessedCorrectly || isLocked) return;
 
         setIsPlaying(true);
         const stageKey = STAGES_ORDER[myStage] ?? Stage.INTRO;
@@ -67,10 +77,12 @@ export const MultiplayerArena: React.FC = () => {
             setIsPlaying(false);
             setHasListened(true);
         });
-    }, [currentTrack, isPlaying, myStage, myGuessedCorrectly]);
+    }, [currentTrack, isPlaying, myStage, myGuessedCorrectly, isLocked]);
 
     // ─── Submit Guess ───
     const handleGuess = useCallback((trackId: string) => {
+        if (isLocked || myGuessedCorrectly) return;
+
         submitGuess(trackId);
         audioEngine.stop();
         setIsPlaying(false);
@@ -78,16 +90,15 @@ export const MultiplayerArena: React.FC = () => {
         // Check shortly if it was wrong for shake feedback
         setTimeout(() => {
             const state = useMultiplayerStore.getState();
-            if (!state.myGuessedCorrectly) {
+            if (!state.myGuessedCorrectly && state.isLocked) {
                 setFeedback('wrong');
                 if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
                 setTimeout(() => setFeedback('none'), 800);
-                setHasListened(false); // Need to listen again at new stage
-            } else {
+            } else if (state.myGuessedCorrectly) {
                 if (navigator.vibrate) navigator.vibrate(50);
             }
         }, 100);
-    }, [submitGuess]);
+    }, [submitGuess, isLocked, myGuessedCorrectly]);
 
     // ─── Handle Next Round ───
     const handleNext = useCallback(() => {
@@ -183,7 +194,7 @@ export const MultiplayerArena: React.FC = () => {
 
     const stageKey = STAGES_ORDER[myStage] ?? Stage.INTRO;
     const stageConfig = STAGE_CONFIG[stageKey];
-    const canGuess = hasListened && !myGuessedCorrectly && !isPlaying;
+    const canGuess = hasListened && !myGuessedCorrectly && !isPlaying && !isLocked;
 
     return (
         <div className="game-container">
@@ -254,8 +265,29 @@ export const MultiplayerArena: React.FC = () => {
                     <div className="pressure-timer-progress">
                         <div
                             className="pressure-timer-fill"
-                            style={{ width: `${(pressureTimerSeconds / 15) * 100}%` }}
+                            style={{ width: `${(pressureTimerSeconds / PRESSURE_TIMER_SECONDS) * 100}%` }}
                         />
+                    </div>
+                </div>
+            )}
+
+            {/* ─── Locked Overlay (wrong guess) ─── */}
+            {isLocked && !myGuessedCorrectly && !opponentCorrectData && (
+                <div className="locked-overlay">
+                    <div className="locked-icon">🔒</div>
+                    <div className="locked-text">Wrong! Waiting for opponent...</div>
+                </div>
+            )}
+
+            {/* ─── Opponent Correct Overlay ─── */}
+            {opponentCorrectData && (
+                <div className="opponent-correct-overlay">
+                    <div className="opponent-correct-icon">😮</div>
+                    <div className="opponent-correct-text">
+                        {opponent?.displayName || 'Opponent'} got it!
+                    </div>
+                    <div className="opponent-correct-track">
+                        {opponentCorrectData.track.title} — {opponentCorrectData.track.artist}
                     </div>
                 </div>
             )}
@@ -301,7 +333,7 @@ export const MultiplayerArena: React.FC = () => {
                     <button
                         className={`play-fab ${isPlaying ? 'play-fab-playing' : ''} ${myGuessedCorrectly ? 'play-fab-guessing' : ''}`}
                         onClick={handlePlay}
-                        disabled={isPlaying || myGuessedCorrectly}
+                        disabled={isPlaying || myGuessedCorrectly || isLocked}
                     >
                         {isPlaying ? (
                             <div className="audio-bars">
@@ -311,6 +343,11 @@ export const MultiplayerArena: React.FC = () => {
                         ) : myGuessedCorrectly ? (
                             <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" />
+                            </svg>
+                        ) : isLocked ? (
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor" opacity="0.4">
+                                <rect x="3" y="11" width="18" height="11" rx="2" />
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" strokeWidth="2" />
                             </svg>
                         ) : (
                             <svg width="48" height="48" viewBox="0 0 24 24" fill="currentColor">
@@ -323,17 +360,18 @@ export const MultiplayerArena: React.FC = () => {
                 {/* ─── Instruction ─── */}
                 <p className="game-instruction">
                     {myGuessedCorrectly && (
-                        <span style={{ color: 'var(--md-primary)' }}>✓ Correct! Waiting for opponent...</span>
+                        <span style={{ color: 'var(--md-primary)' }}>✓ Correct! +{useMultiplayerStore.getState().myPointsThisRound}</span>
                     )}
-                    {!myGuessedCorrectly && isPlaying && (
+                    {isLocked && !myGuessedCorrectly && 'Wrong guess — waiting for opponent...'}
+                    {!myGuessedCorrectly && !isLocked && isPlaying && (
                         <><span className="listening-dot" /> Listening to {stageConfig.seconds}...</>
                     )}
-                    {!myGuessedCorrectly && !isPlaying && !hasListened && 'Tap play to hear the clip'}
-                    {!myGuessedCorrectly && !isPlaying && hasListened && 'Guess below or replay the clip'}
+                    {!myGuessedCorrectly && !isLocked && !isPlaying && !hasListened && 'Tap play to hear the clip'}
+                    {!myGuessedCorrectly && !isLocked && !isPlaying && hasListened && 'Guess below or replay the clip'}
                 </p>
 
                 {/* ─── Search Input ─── */}
-                {!myGuessedCorrectly && (
+                {!myGuessedCorrectly && !isLocked && (
                     <div className={`game-search-area ${feedback === 'wrong' ? 'shake' : ''}`}>
                         <SearchGuess
                             onSelect={handleGuess}

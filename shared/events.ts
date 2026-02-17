@@ -27,6 +27,10 @@ export const Events = {
     NEW_ROUND: 'new_round',
     GAME_OVER: 'game_over',
 
+    // New multiplayer events
+    STAGE_ADVANCE: 'stage_advance',         // Both players advance to next stage simultaneously
+    OPPONENT_CORRECT: 'opponent_correct',   // Opponent guessed correctly — show overlay
+
     // State sync
     OPPONENT_STAGE_UPDATE: 'opponent_stage_update',
 } as const;
@@ -94,12 +98,25 @@ export interface GuessResultPayload {
     correct: boolean;
     pointsEarned: number;
     newStage: number | null; // null = no stage change, number = new stage
+    isLocked: boolean;       // true if input should be blocked (wrong guess)
 }
 
 export interface OpponentGuessedPayload {
     timerSeconds: number; // 15
     opponentStage: number;
     opponentGuessedCorrectly: boolean;
+}
+
+/** Sent when opponent guesses correctly — triggers overlay on the other player */
+export interface OpponentCorrectPayload {
+    track: TrackData;
+    opponentPointsEarned: number;
+    opponentStage: number;
+}
+
+/** Sent to both players when they should advance to the next stage simultaneously */
+export interface StageAdvancePayload {
+    newStage: number; // 0, 1, or 2
 }
 
 export interface RoundCompletePayload {
@@ -141,3 +158,4 @@ export interface OpponentStageUpdatePayload {
 
 export const ROUNDS_PER_GAME = 10;
 export const PRESSURE_TIMER_SECONDS = 15;
+export const MAX_PLAYS_PER_STAGE = 3;
