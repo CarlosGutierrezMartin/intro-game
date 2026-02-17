@@ -61,7 +61,7 @@ interface MultiplayerState {
     createSession: (displayName: string, avatarUrl: string) => void;
     joinSession: (code: string, displayName: string, avatarUrl: string) => void;
     selectTracks: (tracks: TrackData[], playlistName: string) => void;
-    submitGuess: (trackId: string) => void;
+    submitGuess: (trackId: string, title?: string, artist?: string) => void;
     requestNextRound: () => void;
     leaveLobby: () => void;
     reset: () => void;
@@ -121,11 +121,11 @@ export const useMultiplayerStore = create<MultiplayerState>()((set, get) => ({
         emit(Events.SELECT_TRACKS, { tracks, playlistName });
     },
 
-    submitGuess: (trackId) => {
+    submitGuess: (trackId, title?, artist?) => {
         const { myStage, isLocked, myGuessedCorrectly } = get();
         // Guard: can't guess while locked or already correct
         if (isLocked || myGuessedCorrectly) return;
-        emit(Events.SUBMIT_GUESS, { trackId, stage: myStage });
+        emit(Events.SUBMIT_GUESS, { trackId, stage: myStage, guessTitle: title, guessArtist: artist });
     },
 
     requestNextRound: () => {

@@ -44,8 +44,8 @@ export const GameArena: React.FC = () => {
     }, [currentTrack, isAudioPlaying, phase, stage]);
 
     // ─── Submit Guess ───
-    const handleGuess = useCallback((trackId: string) => {
-        const result = submitGuess(trackId);
+    const handleGuess = useCallback((trackId: string, title: string, artist: string) => {
+        const result = submitGuess(trackId, title, artist);
 
         if (result === 'correct') {
             setFeedback('success');

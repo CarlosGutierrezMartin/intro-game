@@ -5,7 +5,7 @@ import { SearchResult } from '../../types';
 import { getSocket } from '../../services/socketService';
 
 interface SearchGuessProps {
-    onSelect: (trackId: string) => void;
+    onSelect: (trackId: string, title: string, artist: string) => void;
     disabled?: boolean;
 }
 
@@ -50,8 +50,8 @@ export const SearchGuess: React.FC<SearchGuessProps> = ({ onSelect, disabled }) 
         return () => clearTimeout(timer);
     }, [query]);
 
-    const handleSelect = useCallback((trackId: string) => {
-        onSelect(trackId);
+    const handleSelect = useCallback((trackId: string, title: string, artist: string) => {
+        onSelect(trackId, title, artist);
         setQuery('');
         setResults([]);
         setIsOpen(false);
@@ -109,7 +109,7 @@ export const SearchGuess: React.FC<SearchGuessProps> = ({ onSelect, disabled }) 
                         <button
                             key={track.id}
                             className="track-card"
-                            onClick={() => handleSelect(track.id)}
+                            onClick={() => handleSelect(track.id, track.title, track.artist)}
                         >
                             <img src={track.albumArt} alt={track.album} />
                             <div className="track-info">

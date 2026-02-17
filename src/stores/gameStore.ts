@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { GamePhase, Stage, STAGE_CONFIG, STAGES_ORDER, Track, Playlist } from '../types';
+import { normalizeForMatch } from '../../shared/events';
 
 /** Maximum number of rounds (songs) per game */
 export const GAME_LENGTH = 10;
@@ -29,7 +30,7 @@ interface GameState {
     startGame: (playlist: Playlist, tracks: Track[]) => void;
     setPhase: (phase: GamePhase) => void;
     setAudioPlaying: (playing: boolean) => void;
-    submitGuess: (guessTrackId: string) => 'correct' | 'wrong' | 'fail';
+    submitGuess: (guessTrackId: string, guessTitle?: string, guessArtist?: string) => 'correct' | 'wrong' | 'fail';
     advanceToGuessing: () => void;
     giveUp: () => void;
     nextRound: () => void;
@@ -88,11 +89,22 @@ export const useGameStore = create<GameState>()(
                 set({ phase: GamePhase.GUESSING, isAudioPlaying: false });
             },
 
-            submitGuess: (guessTrackId) => {
+            submitGuess: (guessTrackId, guessTitle?, guessArtist?) => {
                 const { currentTrack, stage, score, streak, bestStreak, correctGuesses, roundsPlayed } = get();
                 if (!currentTrack) return 'fail';
 
-                if (guessTrackId === currentTrack.id) {
+                // Primary: exact ID match
+                let isCorrect = guessTrackId === currentTrack.id;
+
+                // Fallback: normalized title + artist match
+                if (!isCorrect && guessTitle && guessArtist) {
+                    const guessKey = normalizeForMatch(guessTitle) + '|' + normalizeForMatch(guessArtist);
+                    const trackKey = normalizeForMatch(currentTrack.title) + '|' + normalizeForMatch(currentTrack.artist);
+                    isCorrect = guessKey === trackKey;
+                    if (isCorrect) console.log('[Guess] Fuzzy match accepted:', guessTitle, '≈', currentTrack.title);
+                }
+
+                if (isCorrect) {
                     // ✅ Correct guess
                     const points = STAGE_CONFIG[stage].points;
                     const newStreak = streak + 1;

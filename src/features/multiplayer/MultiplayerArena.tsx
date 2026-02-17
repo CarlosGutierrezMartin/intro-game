@@ -80,10 +80,10 @@ export const MultiplayerArena: React.FC = () => {
     }, [currentTrack, isPlaying, myStage, myGuessedCorrectly, isLocked]);
 
     // ─── Submit Guess ───
-    const handleGuess = useCallback((trackId: string) => {
+    const handleGuess = useCallback((trackId: string, title: string, artist: string) => {
         if (isLocked || myGuessedCorrectly) return;
 
-        submitGuess(trackId);
+        submitGuess(trackId, title, artist);
         audioEngine.stop();
         setIsPlaying(false);
 

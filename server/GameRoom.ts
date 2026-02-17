@@ -8,6 +8,7 @@ import {
     StageAdvancePayload,
     ROUNDS_PER_GAME,
     PRESSURE_TIMER_SECONDS,
+    normalizeForMatch,
 } from '../shared/events';
 
 // ─── Per-Player State ───
@@ -154,7 +155,7 @@ export class GameRoom {
     // 5. Pressure timer expiry → both advance to next stage
     // 6. Last stage failure → round over with 0 points for that player
 
-    submitGuess(playerId: string, guessTrackId: string, stage: number): void {
+    submitGuess(playerId: string, guessTrackId: string, stage: number, guessTitle?: string, guessArtist?: string): void {
         if (this.roundComplete) return;
 
         const state = this.playerStates.get(playerId);
@@ -168,7 +169,17 @@ export class GameRoom {
         if (!currentTrack) return;
 
         const opponentId = this.getOpponentId(playerId);
-        const correct = guessTrackId === currentTrack.id;
+
+        // Primary: exact ID match
+        let correct = guessTrackId === currentTrack.id;
+
+        // Fallback: normalized title + artist match
+        if (!correct && guessTitle && guessArtist) {
+            const guessKey = normalizeForMatch(guessTitle) + '|' + normalizeForMatch(guessArtist);
+            const trackKey = normalizeForMatch(currentTrack.title) + '|' + normalizeForMatch(currentTrack.artist);
+            correct = guessKey === trackKey;
+            if (correct) console.log(`[GameRoom] Fuzzy match accepted: "${guessTitle}" ≈ "${currentTrack.title}"`);
+        }
 
         if (correct) {
             // ─── CORRECT GUESS ─── Round ends immediately

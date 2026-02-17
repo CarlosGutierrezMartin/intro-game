@@ -133,7 +133,7 @@ io.on('connection', (socket) => {
         const room = sessions.getRoom(currentRoomCode);
         if (!room) return;
 
-        room.submitGuess(socket.id, payload.trackId, payload.stage);
+        room.submitGuess(socket.id, payload.trackId, payload.stage, payload.guessTitle, payload.guessArtist);
     });
 
     // ─── Next Round ───

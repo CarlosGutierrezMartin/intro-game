@@ -92,6 +92,25 @@ export interface GameStartingPayload {
 export interface SubmitGuessPayload {
     trackId: string;
     stage: number; // 0=1s, 1=3s, 2=5s
+    guessTitle?: string;  // For fuzzy matching fallback
+    guessArtist?: string; // For fuzzy matching fallback
+}
+
+/**
+ * Normalize a string for fuzzy track matching.
+ * Strips accents, parens, "feat.", "ft.", casing, extra whitespace.
+ */
+export function normalizeForMatch(s: string): string {
+    return s
+        .normalize('NFD')                      // decompose accents
+        .replace(/[\u0300-\u036f]/g, '')       // strip diacritics
+        .toLowerCase()
+        .replace(/\(.*?\)/g, '')               // remove parenthesized text (remix, deluxe, etc.)
+        .replace(/\[.*?\]/g, '')               // remove bracketed text
+        .replace(/\b(feat\.?|ft\.?|featuring)\b/gi, '') // strip featuring
+        .replace(/[^a-z0-9\s]/g, '')           // strip non-alphanumeric
+        .replace(/\s+/g, ' ')                  // collapse whitespace
+        .trim();
 }
 
 export interface GuessResultPayload {
