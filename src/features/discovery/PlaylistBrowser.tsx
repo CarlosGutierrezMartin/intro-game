@@ -9,6 +9,8 @@ import { Playlist, Track } from '../../types';
 import { GAME_LENGTH } from '../../stores/gameStore';
 import { useMultiplayerStore } from '../../stores/multiplayerStore';
 import { redirectToSpotifyLogin } from '../auth/spotifyAuth';
+import { connectSocket, getSocket } from '../../services/socketService';
+import { TrackData } from '../../../shared/events';
 
 export const PlaylistBrowser: React.FC = () => {
     const { user, logout, checkAndRefresh } = useAuthStore();
@@ -20,8 +22,42 @@ export const PlaylistBrowser: React.FC = () => {
     const [loadingId, setLoadingId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
+    // Generic curated playlists (fetched from server via socket)
+    interface GenericPlaylist {
+        id: string;
+        name: string;
+        coverUrl: string;
+        trackCount: number;
+        tracks: TrackData[];
+    }
+    const [genericPlaylists, setGenericPlaylists] = useState<GenericPlaylist[]>([]);
+    const [genericLoading, setGenericLoading] = useState(true);
+
     useEffect(() => {
         loadPlaylists();
+    }, []);
+
+    // Fetch generic playlists from server
+    useEffect(() => {
+        setGenericLoading(true);
+        const socket = connectSocket();
+
+        const onPlaylists = (data: { playlists: GenericPlaylist[] }) => {
+            setGenericPlaylists(data.playlists);
+            setGenericLoading(false);
+        };
+        const onError = () => {
+            setGenericLoading(false);
+        };
+
+        socket.on('generic_playlists', onPlaylists);
+        socket.on('generic_playlists_error', onError);
+        socket.emit('request_generic_playlists');
+
+        return () => {
+            socket.off('generic_playlists', onPlaylists);
+            socket.off('generic_playlists_error', onError);
+        };
     }, []);
 
     const getToken = async (): Promise<string | null> => {
@@ -154,6 +190,29 @@ export const PlaylistBrowser: React.FC = () => {
         }
     };
 
+    // ─── Play a generic curated playlist solo ───
+    const handleGenericPlaylist = async (gp: GenericPlaylist) => {
+        if (loadingId) return;
+        setLoadingId(gp.id);
+        setError(null);
+        try {
+            // Tracks already come with previewUrls from the server
+            const tracks: Track[] = gp.tracks.map(t => ({
+                id: t.id,
+                title: t.title,
+                artist: t.artist,
+                album: t.album,
+                albumArt: t.albumArt,
+                previewUrl: t.previewUrl,
+            }));
+            await launchGame(gp.id, gp.name, gp.coverUrl, tracks);
+        } catch (e: any) {
+            setError(e.message || 'Failed to load tracks');
+        } finally {
+            setLoadingId(null);
+        }
+    };
+
     // ─── Built-in quick-play cards ───
     const quickPlayCards = [
         { id: 'liked', label: '💚 Liked Songs', sub: 'Your saved songs', onClick: handleLikedSongs },
@@ -229,6 +288,54 @@ export const PlaylistBrowser: React.FC = () => {
                         style={{ float: 'right', opacity: 0.7, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}
                     >✕</button>
                 </div>
+            )}
+
+            {/* ─── Fair Play — curated playlists ─── */}
+            <div className="discovery-section-title">⚡ Fair Play</div>
+            <p style={{ fontSize: '0.8125rem', color: 'var(--md-on-surface-variant)', opacity: 0.75, margin: '-12px 0 16px' }}>Popular playlists — no login needed</p>
+            {genericLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '16px' }}>
+                    <div className="spinner" style={{ width: 24, height: 24, borderWidth: 2 }} />
+                </div>
+            ) : genericPlaylists.length > 0 ? (
+                <div className="playlist-grid" style={{ marginBottom: 24 }}>
+                    {genericPlaylists.map((gp) => (
+                        <button
+                            key={gp.id}
+                            className="playlist-card"
+                            onClick={() => handleGenericPlaylist(gp)}
+                            disabled={!!loadingId}
+                            style={{ textAlign: 'left', border: 'none', width: '100%' }}
+                        >
+                            {gp.coverUrl ? (
+                                <img className="playlist-art" src={gp.coverUrl} alt={gp.name} loading="lazy" />
+                            ) : (
+                                <div className="playlist-art" style={{
+                                    aspectRatio: '1',
+                                    backgroundColor: 'var(--md-surface-container-high)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}>
+                                    <span style={{ fontSize: '2rem' }}>🎵</span>
+                                </div>
+                            )}
+                            <div className="playlist-overlay">
+                                <div className="playlist-name">{gp.name}</div>
+                                <div className="playlist-tracks">
+                                    {loadingId === gp.id ? (
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                            <span className="spinner" style={{ width: '12px', height: '12px', borderWidth: '2px' }} />
+                                            Loading...
+                                        </span>
+                                    ) : (
+                                        `${gp.trackCount} tracks`
+                                    )}
+                                </div>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            ) : (
+                <p style={{ fontSize: '0.875rem', color: 'var(--md-on-surface-variant)', textAlign: 'center', padding: '16px 0' }}>Could not load curated playlists</p>
             )}
 
             {/* Quick Play — always available */}

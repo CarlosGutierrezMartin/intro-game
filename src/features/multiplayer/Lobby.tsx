@@ -4,7 +4,7 @@ import { useMultiplayerStore } from '../../stores/multiplayerStore';
 import { useAuthStore } from '../../stores/authStore';
 
 export const Lobby: React.FC = () => {
-    const { createSession, joinSession, error } = useMultiplayerStore();
+    const { createSession, joinSession, leaveLobby, error } = useMultiplayerStore();
     const user = useAuthStore((s) => s.user);
     const [joinCode, setJoinCode] = useState('');
     const [localName, setLocalName] = useState('');
@@ -86,6 +86,12 @@ export const Lobby: React.FC = () => {
 
     return (
         <div className="lobby-container slide-up">
+            <div className="game-header">
+                <button className="game-header-btn" onClick={leaveLobby}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+                </button>
+                <div style={{ flex: 1 }} />
+            </div>
             <div className="lobby-header">
                 <h1 className="discovery-logo">Intro</h1>
                 <p className="lobby-subtitle">Challenge a friend — first to guess wins!</p>
