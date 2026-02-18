@@ -263,6 +263,26 @@
     font-weight: 600;
 }
 
+.waiting-section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.waiting-section-label {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--md-on-surface);
+    white-space: nowrap;
+}
+
+.waiting-section-hint {
+    font-size: 0.8125rem;
+    color: var(--md-on-surface-variant);
+    opacity: 0.75;
+}
+
 .waiting-playlist-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

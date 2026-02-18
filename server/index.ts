@@ -170,40 +170,76 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            // Fetch Global Top 50
-            const playlistId = '37i9dQZEVXbMDoHDwVN2tF';
-            const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, {
-                headers: { Authorization: `Bearer ${token}` },
-            });
+            // Curated playlists for fair multiplayer games
+            const CURATED_PLAYLISTS = [
+                { id: '37i9dQZEVXbMDoHDwVN2tF', label: 'Global Top 50 🌎' },
+                { id: '37i9dQZEVXbLRQDuF5jeBp', label: 'US Top 50 🇺🇸' },
+                { id: '37i9dQZEVXbNFJfN1Vw8d9', label: 'Spain Top 50 🇪🇸' },
+                { id: '37i9dQZEVXbLiRSasKsNU9', label: 'Viral 50 Global 🔥' },
+                { id: '37i9dQZEVXbNG2KDcFcKOF', label: 'Top Songs Global ✨' },
+                { id: '37i9dQZEVXbMXbN3EUUhlg', label: "Today's Top Hits 🎵" },
+            ];
 
-            if (!response.ok) throw new Error('Failed to fetch Top 50');
+            const results = await Promise.allSettled(
+                CURATED_PLAYLISTS.map(async ({ id, label }) => {
+                    const res = await fetch(`https://api.spotify.com/v1/playlists/${id}`, {
+                        headers: { Authorization: `Bearer ${token}` },
+                    });
+                    if (!res.ok) throw new Error(`Failed to fetch ${label}`);
+                    const data = await res.json();
 
-            const data = await response.json();
-            const tracks = data.tracks.items
-                .filter((item: any) => item.track && item.track.preview_url)
-                .map((item: any) => ({
-                    id: item.track.id,
-                    title: item.track.name,
-                    artist: item.track.artists.map((a: any) => a.name).join(', '),
-                    album: item.track.album.name,
-                    albumArt: item.track.album.images?.[0]?.url || '',
-                    previewUrl: item.track.preview_url,
-                }))
-                .slice(0, 50); // Limit to 50
+                    // Map tracks, keeping those with preview_url for now
+                    const rawTracks = (data.tracks?.items || [])
+                        .filter((item: any) => item.track)
+                        .map((item: any) => ({
+                            id: item.track.id,
+                            title: item.track.name,
+                            artist: item.track.artists.map((a: any) => a.name).join(', '),
+                            album: item.track.album.name,
+                            albumArt: item.track.album.images?.[0]?.url || '',
+                            previewUrl: item.track.preview_url || null,
+                        }))
+                        .slice(0, 50);
 
-            const playlist = {
-                id: 'global-top-50',
-                name: 'Global Top 50 🌎',
-                coverUrl: data.images?.[0]?.url || '',
-                trackCount: tracks.length,
-                tracks: tracks
-            };
+                    // Server-side preview URL resolution for tracks missing previews
+                    const tracksNeedingPreview = rawTracks.filter((t: any) => !t.previewUrl);
+                    if (tracksNeedingPreview.length > 0) {
+                        console.log(`[Server] Resolving ${tracksNeedingPreview.length} preview URLs for "${label}"...`);
+                        for (const track of tracksNeedingPreview) {
+                            try {
+                                const url = await scrapePreviewUrl(track.id);
+                                if (url) track.previewUrl = url;
+                            } catch { /* skip */ }
+                        }
+                    }
 
-            socket.emit('generic_playlists', { playlists: [playlist] });
+                    const playableTracks = rawTracks.filter((t: any) => t.previewUrl);
+
+                    return {
+                        id: `generic-${id}`,
+                        name: label,
+                        coverUrl: data.images?.[0]?.url || '',
+                        trackCount: playableTracks.length,
+                        tracks: playableTracks,
+                    };
+                })
+            );
+
+            const playlists = results
+                .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value.trackCount >= 3)
+                .map(r => r.value);
+
+            if (playlists.length === 0) {
+                socket.emit('generic_playlists_error', { message: 'No curated playlists available' });
+                return;
+            }
+
+            socket.emit('generic_playlists', { playlists });
+            console.log(`[Server] Sent ${playlists.length} generic playlists`);
 
         } catch (e) {
             console.error('[Server] Failed to fetch generic playlists:', e);
-            socket.emit('generic_playlists_error', { message: 'Failed to load Top 50' });
+            socket.emit('generic_playlists_error', { message: 'Failed to load curated playlists' });
         }
     });
 
@@ -293,6 +329,30 @@ async function getClientCredentialsToken(): Promise<string | null> {
     }
 }
 
+
+// ─── Server-side preview URL scraping (mirrors client previewFetcher.ts) ───
+async function scrapePreviewUrl(trackId: string): Promise<string | null> {
+    try {
+        const response = await fetch(`https://open.spotify.com/embed/track/${trackId}`, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        });
+        if (!response.ok) return null;
+
+        const html = await response.text();
+
+        // Extract audioPreview URL from embedded JSON
+        const match = html.match(/"audioPreview"\s*:\s*\{\s*"url"\s*:\s*"([^"]+)"/);
+        if (match?.[1]) return match[1];
+
+        // Fallback: mp3 preview URL pattern
+        const mp3Match = html.match(/https:\/\/p\.scdn\.co\/mp3-preview\/[a-zA-Z0-9]+[^"']*/);
+        if (mp3Match) return mp3Match[0];
+
+        return null;
+    } catch {
+        return null;
+    }
+}
 
 function wireRoomCallbacks(room: ReturnType<SessionManager['getRoom']>, roomCode: string): void {
     if (!room) return;

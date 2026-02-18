@@ -19,63 +19,67 @@ interface PlaylistOption {
 export const WaitingRoom: React.FC = () => {
     const { sessionCode, isHost, me, opponent, selectTracks, leaveLobby, error } = useMultiplayerStore();
     const { checkAndRefresh, user } = useAuthStore();
-    const [playlists, setPlaylists] = useState<PlaylistOption[]>([]);
+    const [genericPlaylists, setGenericPlaylists] = useState<PlaylistOption[]>([]);
+    const [userPlaylists, setUserPlaylists] = useState<PlaylistOption[]>([]);
     const [loading, setLoading] = useState(false);
     const [loadingPlaylist, setLoadingPlaylist] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
 
-    // Load playlists (User's or Generic)
+    // Always load generic playlists + user playlists if logged in
     useEffect(() => {
         if (!isHost) return;
 
-        const loadContent = async () => {
-            setLoading(true);
+        setLoading(true);
+        let cleanedUp = false;
 
-            // If logged in, load user playlists
-            if (user) {
-                try {
-                    const token = await checkAndRefresh();
-                    if (!token) return;
-                    const provider = new SpotifyProvider(() => token);
-                    const data = await provider.getUserPlaylists();
-                    setPlaylists(data.map((p: any) => ({
-                        id: p.id,
-                        name: p.name,
-                        coverUrl: p.coverUrl,
-                        trackCount: p.trackCount,
-                    })));
-                } catch (e) {
-                    console.error('[WaitingRoom] Failed to load user playlists:', e);
-                } finally {
-                    setLoading(false);
-                }
-            } else {
-                // If NOT logged in, request Generic Playlists from Server
-                const socket = getSocket();
+        // 1. Always request generic playlists from the server
+        const socket = getSocket();
 
-                const onGenericPlaylists = (data: { playlists: PlaylistOption[] }) => {
-                    setPlaylists(data.playlists);
-                    setLoading(false);
-                };
-
-                const onGenericError = (data: { message: string }) => {
-                    console.error('[WaitingRoom] Generic playlist error:', data.message);
-                    setLoading(false);
-                };
-
-                socket.on('generic_playlists', onGenericPlaylists);
-                socket.on('generic_playlists_error', onGenericError);
-
-                socket.emit('request_generic_playlists');
-
-                return () => {
-                    socket.off('generic_playlists', onGenericPlaylists);
-                    socket.off('generic_playlists_error', onGenericError);
-                };
+        const onGenericPlaylists = (data: { playlists: PlaylistOption[] }) => {
+            if (!cleanedUp) {
+                setGenericPlaylists(data.playlists);
+                if (!user) setLoading(false); // If no user playlists to load, stop loading
             }
         };
 
-        loadContent();
+        const onGenericError = (data: { message: string }) => {
+            console.error('[WaitingRoom] Generic playlist error:', data.message);
+            if (!user && !cleanedUp) setLoading(false);
+        };
+
+        socket.on('generic_playlists', onGenericPlaylists);
+        socket.on('generic_playlists_error', onGenericError);
+        socket.emit('request_generic_playlists');
+
+        // 2. If logged in, also load user playlists
+        if (user) {
+            (async () => {
+                try {
+                    const token = await checkAndRefresh();
+                    if (!token || cleanedUp) return;
+                    const provider = new SpotifyProvider(() => token);
+                    const data = await provider.getUserPlaylists();
+                    if (!cleanedUp) {
+                        setUserPlaylists(data.map((p: any) => ({
+                            id: p.id,
+                            name: p.name,
+                            coverUrl: p.coverUrl,
+                            trackCount: p.trackCount,
+                        })));
+                    }
+                } catch (e) {
+                    console.error('[WaitingRoom] Failed to load user playlists:', e);
+                } finally {
+                    if (!cleanedUp) setLoading(false);
+                }
+            })();
+        }
+
+        return () => {
+            cleanedUp = true;
+            socket.off('generic_playlists', onGenericPlaylists);
+            socket.off('generic_playlists_error', onGenericError);
+        };
     }, [isHost, user]);
 
     const handleCopyCode = async () => {
@@ -208,70 +212,111 @@ export const WaitingRoom: React.FC = () => {
                 <div className="waiting-playlist-section">
                     <h3 className="waiting-playlist-title">Choose a playlist</h3>
 
-                    {/* Login Prompt for Guests */}
-                    {!user && (
-                        <div style={{ marginBottom: 24, textAlign: 'center' }}>
-                            <p style={{ opacity: 0.7, marginBottom: 12, fontSize: '0.9rem' }}>
-                                Want to play your own playlists?
-                            </p>
-                            <button
-                                onClick={redirectToSpotifyLogin}
-                                className="spotify-btn"
-                                style={{ padding: '8px 24px', fontSize: '0.9rem' }}
-                            >
-                                Log in to Spotify
-                            </button>
-                        </div>
-                    )}
-
                     {loading ? (
                         <div style={{ display: 'flex', justifyContent: 'center', padding: '32px' }}>
                             <div className="spinner" />
                         </div>
                     ) : (
-                        <div className="waiting-playlist-grid">
-                            {/* ─── Liked Songs Card (Logged In Only) ─── */}
-                            {user && (
-                                <button
-                                    className="waiting-playlist-card"
-                                    onClick={() => handleSelectPlaylist({ id: 'liked-songs', name: 'Liked Songs', coverUrl: '', trackCount: 0 })}
-                                    disabled={loadingPlaylist !== null}
-                                >
-                                    <div className="waiting-playlist-art" style={{ background: 'linear-gradient(135deg, #450af5, #c4efd9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <span style={{ fontSize: '2rem' }}>💖</span>
+                        <>
+                            {/* ─── Fair Play Section (Always Visible) ─── */}
+                            {genericPlaylists.length > 0 && (
+                                <div style={{ marginBottom: 24 }}>
+                                    <div className="waiting-section-header">
+                                        <span className="waiting-section-label">⚡ Fair Play</span>
+                                        <span className="waiting-section-hint">Same songs for both players</span>
                                     </div>
-                                    <div className="waiting-playlist-info">
-                                        <div className="waiting-playlist-name">Liked Songs</div>
-                                        <div className="waiting-playlist-count">Your favorites</div>
+                                    <div className="waiting-playlist-grid">
+                                        {genericPlaylists.map((pl) => (
+                                            <button
+                                                key={pl.id}
+                                                className="waiting-playlist-card"
+                                                onClick={() => handleSelectPlaylist(pl)}
+                                                disabled={loadingPlaylist !== null}
+                                            >
+                                                <img
+                                                    className="waiting-playlist-art"
+                                                    src={pl.coverUrl || ''}
+                                                    alt={pl.name}
+                                                />
+                                                <div className="waiting-playlist-info">
+                                                    <div className="waiting-playlist-name">{pl.name}</div>
+                                                    <div className="waiting-playlist-count">{pl.trackCount} tracks</div>
+                                                </div>
+                                                {loadingPlaylist === pl.id && (
+                                                    <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+                                                )}
+                                            </button>
+                                        ))}
                                     </div>
-                                    {loadingPlaylist === 'liked-songs' && (
-                                        <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
-                                    )}
-                                </button>
+                                </div>
                             )}
 
-                            {playlists.map((pl) => (
-                                <button
-                                    key={pl.id}
-                                    className="waiting-playlist-card"
-                                    onClick={() => handleSelectPlaylist(pl)}
-                                    disabled={loadingPlaylist !== null}
-                                >
-                                    <img
-                                        className="waiting-playlist-art"
-                                        src={pl.coverUrl || ''}
-                                        alt={pl.name}
-                                    />
-                                    <div className="waiting-playlist-info">
-                                        <div className="waiting-playlist-name">{pl.name}</div>
-                                        <div className="waiting-playlist-count">{pl.trackCount} tracks</div>
+                            {/* ─── Your Playlists Section (Logged In Only) ─── */}
+                            {user && (
+                                <div>
+                                    <div className="waiting-section-header">
+                                        <span className="waiting-section-label">🎵 Your Playlists</span>
                                     </div>
-                                    {loadingPlaylist === pl.id && (
-                                        <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
-                                    )}
-                                </button>
-                            ))}
-                        </div>
+                                    <div className="waiting-playlist-grid">
+                                        {/* Liked Songs Card */}
+                                        <button
+                                            className="waiting-playlist-card"
+                                            onClick={() => handleSelectPlaylist({ id: 'liked-songs', name: 'Liked Songs', coverUrl: '', trackCount: 0 })}
+                                            disabled={loadingPlaylist !== null}
+                                        >
+                                            <div className="waiting-playlist-art" style={{ background: 'linear-gradient(135deg, #450af5, #c4efd9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <span style={{ fontSize: '2rem' }}>💖</span>
+                                            </div>
+                                            <div className="waiting-playlist-info">
+                                                <div className="waiting-playlist-name">Liked Songs</div>
+                                                <div className="waiting-playlist-count">Your favorites</div>
+                                            </div>
+                                            {loadingPlaylist === 'liked-songs' && (
+                                                <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+                                            )}
+                                        </button>
+
+                                        {userPlaylists.map((pl) => (
+                                            <button
+                                                key={pl.id}
+                                                className="waiting-playlist-card"
+                                                onClick={() => handleSelectPlaylist(pl)}
+                                                disabled={loadingPlaylist !== null}
+                                            >
+                                                <img
+                                                    className="waiting-playlist-art"
+                                                    src={pl.coverUrl || ''}
+                                                    alt={pl.name}
+                                                />
+                                                <div className="waiting-playlist-info">
+                                                    <div className="waiting-playlist-name">{pl.name}</div>
+                                                    <div className="waiting-playlist-count">{pl.trackCount} tracks</div>
+                                                </div>
+                                                {loadingPlaylist === pl.id && (
+                                                    <div className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Login Prompt for Guests */}
+                            {!user && (
+                                <div style={{ marginTop: 16, textAlign: 'center' }}>
+                                    <p style={{ opacity: 0.7, marginBottom: 12, fontSize: '0.9rem' }}>
+                                        Want to play your own playlists?
+                                    </p>
+                                    <button
+                                        onClick={redirectToSpotifyLogin}
+                                        className="spotify-btn"
+                                        style={{ padding: '8px 24px', fontSize: '0.9rem' }}
+                                    >
+                                        Log in to Spotify
+                                    </button>
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
             )}
